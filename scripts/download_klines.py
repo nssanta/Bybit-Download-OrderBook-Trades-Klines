@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Загрузчик Klines данных Bybit.
-Поддерживает Spot (через API) и Futures/Perpetuals (через архивы).
+Поддерживает Spot (через API) и Futures/Perpetuals (через API linear).
+Поддерживает несколько символов с соблюдением rate limits.
 """
 
 import os
@@ -60,10 +61,10 @@ def fetch_klines_api(category: str, symbol: str, interval: str, start_ms: int, e
         return []
 
 
-def download_klines_api(category: str, symbol: str, interval: str, start_date: str, end_date: str,
-                        output_dir: Path, rate_limit: float = 0.2) -> Dict[str, Any]:
+def download_klines_symbol(category: str, symbol: str, interval: str, start_date: str, end_date: str,
+                           output_dir: Path, rate_limit: float = 0.1) -> Dict[str, Any]:
     """
-    Скачиваем klines по API с пагинацией.
+    Скачиваем klines для одного символа по API с пагинацией.
 
     params:
         category: spot или linear (futures)
@@ -76,7 +77,8 @@ def download_klines_api(category: str, symbol: str, interval: str, start_date: s
     return:
         Статистика
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    symbol_dir = output_dir / symbol
+    symbol_dir.mkdir(parents=True, exist_ok=True)
     
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
@@ -91,14 +93,14 @@ def download_klines_api(category: str, symbol: str, interval: str, start_date: s
     }
     
     if interval not in interval_map:
-        print(f"Интервал {interval} не поддерживается. Доступны: {list(interval_map.keys())}")
-        return {'status': 'error'}
+        print(f"  Интервал {interval} не поддерживается.")
+        return {'status': 'error', 'candles': 0}
     
     interval_ms = interval_map[interval]
     batch_size = 1000 * interval_ms
     
     total_requests = ((end_ms - start_ms) // batch_size) + 1
-    print(f"API Загрузка ({category.upper()}): ~{total_requests} запросов")
+    print(f"  ~{total_requests} запросов, rate_limit={rate_limit}s")
     
     all_klines = []
     current_start = start_ms
@@ -111,14 +113,14 @@ def download_klines_api(category: str, symbol: str, interval: str, start_date: s
         if klines:
             all_klines.extend(klines)
             request_count += 1
-            if request_count % 50 == 0:
-                print(f"  Запросов: {request_count}, Свечей: {len(all_klines)}")
+            if request_count % 100 == 0:
+                print(f"    Запросов: {request_count}, Свечей: {len(all_klines)}")
         
         current_start = current_end
         time.sleep(rate_limit)
     
     if not all_klines:
-        print("Нет данных")
+        print(f"  Нет данных")
         return {'status': 'error', 'candles': 0}
     
     df = pl.DataFrame({
@@ -134,19 +136,15 @@ def download_klines_api(category: str, symbol: str, interval: str, start_date: s
     df = df.unique(subset=['timestamp']).sort('timestamp')
     df = df.with_columns((pl.col('timestamp').cast(pl.Datetime('ms'))).alias('datetime'))
     
-    output_file = output_dir / f"{symbol}_{category}_{interval}_{start_date}_{end_date}.parquet"
+    output_file = symbol_dir / f"{symbol}_{category}_{interval}_{start_date}_{end_date}.parquet"
     df.write_parquet(output_file, compression="zstd")
     
-    # Simple CSV for verification
-    csv_file = output_file.with_suffix('.csv')
-    df.write_csv(csv_file)
-    
-    print(f"\n✓ {category.upper()} Klines: {len(df):,} свечей → {output_file.name}")
+    print(f"  ✓ {len(df):,} свечей → {output_file.name}")
     return {'status': 'success', 'candles': len(df), 'file': str(output_file)}
 
 
 # ============================================================
-# ARCHIVE DOWNLOADER (Only for Futures history)
+# ARCHIVE DOWNLOADER (Only for Futures history - Legacy)
 # ============================================================
 
 def download_file(url: str, filepath: Path, max_retries: int = 3) -> Tuple[bool, str]:
@@ -202,10 +200,10 @@ def month_range(start: datetime, end: datetime):
         current += relativedelta(months=1)
 
 
-def download_archive_klines(symbol: str, interval: str, start_date: str, end_date: str,
+def download_archive_symbol(symbol: str, interval: str, start_date: str, end_date: str,
                             output_dir: Path) -> Dict[str, Any]:
     """
-    Скачиваем Futures klines из архивов MT4.
+    Скачиваем Futures klines из архивов MT4 (Legacy).
 
     params:
         symbol: Торговая пара
@@ -216,7 +214,8 @@ def download_archive_klines(symbol: str, interval: str, start_date: str, end_dat
     return:
         Статистика
     """
-    output_dir.mkdir(parents=True, exist_ok=True)
+    symbol_dir = output_dir / symbol
+    symbol_dir.mkdir(parents=True, exist_ok=True)
     
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
@@ -231,18 +230,18 @@ def download_archive_klines(symbol: str, interval: str, start_date: str, end_dat
         
         filename = f"{symbol}_{interval}_{month_start}_{month_end}.csv.gz"
         url = f"https://public.bybit.com/kline_for_metatrader4/{symbol}/{year}/{filename}"
-        filepath = output_dir / filename
+        filepath = symbol_dir / filename
         
         if not filepath.exists():
             tasks.append((url, filepath))
         else:
-            print(f"  Skip: {filename}")
+            print(f"    Skip: {filename}")
     
     if not tasks:
-        print("Все файлы уже скачаны")
-        return {'status': 'skipped'}
+        print("  Все файлы уже скачаны")
+        return {'status': 'skipped', 'files': 0}
     
-    print(f"К скачиванию: {len(tasks)} файлов")
+    print(f"  К скачиванию: {len(tasks)} файлов")
     
     success = 0
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -251,12 +250,11 @@ def download_archive_klines(symbol: str, interval: str, start_date: str, end_dat
             path = futures[future]
             ok, msg = future.result()
             if ok:
-                print(f"  ✓ {path.name}")
+                print(f"    ✓ {path.name}")
                 success += 1
             else:
-                print(f"  ✗ {path.name} ({msg})")
+                print(f"    ✗ {path.name} ({msg})")
     
-    print(f"\n✓ Archive Klines: {success} файлов загружено")
     return {'status': 'success', 'files': success}
 
 
@@ -270,52 +268,76 @@ def main() -> None:
         None
     """
     parser = argparse.ArgumentParser(
-        description="Скачиваем Klines данные Bybit (API v5 + Archives)",
+        description="Скачиваем Klines данные Bybit (API v5)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Примеры:
   # Spot (API)
   python download_klines.py BTCUSDT --source spot --start-date 2025-01-01 --end-date 2025-01-31 --interval 1
   
-  # Futures (API - свежие данные)
-  python download_klines.py BTCUSDT --source linear --start-date 2026-01-01 --end-date 2026-01-08 --interval 60
+  # Futures (API - рекомендуется)
+  python download_klines.py --symbols BTCUSDT,ETHUSDT --source linear --start-date 2025-01-01 --end-date 2025-12-31 --interval 60
   
-  # Futures (Archive - исторические данные, быстро)
+  # Futures (Archive - legacy, данные могут быть неточными)
   python download_klines.py BTCUSDT --source archive --start-date 2024-01-01 --end-date 2024-12-31 --interval 1
         """
     )
-    parser.add_argument("symbol", nargs="?", default="BTCUSDT",
-                        help="Торговая пара (default: BTCUSDT)")
+    parser.add_argument("symbol", nargs="?", default=None,
+                        help="Торговая пара (можно использовать --symbols)")
+    parser.add_argument("--symbols", type=str, default=None,
+                        help="Список пар через запятую: BTCUSDT,ETHUSDT,SOLUSDT")
     parser.add_argument("--source", type=str, choices=["spot", "linear", "archive"], required=True,
-                        help="Источник: spot (API), linear (Futures API), archive (Futures Monthly)")
+                        help="Источник: spot (API), linear (Futures API), archive (Legacy)")
     parser.add_argument("--start-date", type=str, required=True,
                         help="Начальная дата (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, required=True,
                         help="Конечная дата (YYYY-MM-DD)")
     parser.add_argument("--interval", type=str, default="1",
                         help="Интервал (1, 5, 60, D, etc)")
+    parser.add_argument("--rate-limit", type=float, default=0.1,
+                        help="Пауза между API запросами (секунды)")
     parser.add_argument("--output-dir", type=str, default=None,
                         help="Директория для сохранения")
     
     args = parser.parse_args()
     
+    # Определяем список символов
+    if args.symbols:
+        symbols = [s.strip().upper() for s in args.symbols.split(',')]
+    elif args.symbol:
+        symbols = [args.symbol.upper()]
+    else:
+        symbols = ["BTCUSDT"]
+    
     if args.output_dir:
         output_dir = Path(args.output_dir)
     else:
-        # Автоматическая структура
         subdir = "spot" if args.source == "spot" else "futures"
-        output_dir = Path(f"data/klines/{subdir}/{args.symbol}")
+        output_dir = Path(f"data/klines/{subdir}")
     
     print(f"Bybit Klines Downloader")
-    print(f"Symbol: {args.symbol}")
+    print(f"Symbols: {', '.join(symbols)}")
     print(f"Source: {args.source.upper()}")
+    print(f"Interval: {args.interval}")
     print(f"Period: {args.start_date} to {args.end_date}")
+    print(f"Rate Limit: {args.rate_limit}s")
+    print("=" * 50)
     
-    if args.source == "archive":
-        download_archive_klines(args.symbol, args.interval, args.start_date, args.end_date, output_dir)
-    else:
-        # spot или linear (API)
-        download_klines_api(args.source, args.symbol, args.interval, args.start_date, args.end_date, output_dir)
+    total_candles = 0
+    
+    for i, symbol in enumerate(symbols, 1):
+        print(f"\n[{i}/{len(symbols)}] {symbol}")
+        print("-" * 30)
+        
+        if args.source == "archive":
+            stats = download_archive_symbol(symbol, args.interval, args.start_date, args.end_date, output_dir)
+        else:
+            stats = download_klines_symbol(args.source, symbol, args.interval, 
+                                           args.start_date, args.end_date, output_dir, args.rate_limit)
+            total_candles += stats.get('candles', 0)
+    
+    print("\n" + "=" * 50)
+    print(f"ИТОГО: {total_candles:,} свечей скачано")
 
 
 if __name__ == "__main__":

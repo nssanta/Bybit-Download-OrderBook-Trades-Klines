@@ -2,6 +2,7 @@
 """
 Загрузчик Trades данных Bybit.
 Скачиваем исторические тиковые данные сделок с публичного хранилища.
+Поддерживает несколько символов.
 """
 
 import os
@@ -11,7 +12,7 @@ import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Tuple
+from typing import Tuple, List
 
 
 def download_file(url: str, filepath: Path, max_retries: int = 3) -> Tuple[bool, str]:
@@ -76,6 +77,71 @@ def daterange(start: datetime, end: datetime):
         current += timedelta(days=1)
 
 
+def download_symbol(symbol: str, start: datetime, end: datetime,
+                    output_dir: Path, workers: int, dry_run: bool) -> dict:
+    """
+    Скачиваем Trades для одного символа.
+
+    params:
+        symbol: Торговая пара
+        start: Начальная дата
+        end: Конечная дата
+        output_dir: Директория для сохранения
+        workers: Количество параллельных загрузок
+        dry_run: Только показать URL
+    return:
+        Статистика {success, failed, skipped}
+    """
+    symbol_dir = output_dir / symbol
+    symbol_dir.mkdir(parents=True, exist_ok=True)
+    
+    tasks = []
+    skipped = 0
+    
+    for date in daterange(start, end):
+        date_str = date.strftime("%Y-%m-%d")
+        filename = f"{symbol}_{date_str}.csv.gz"
+        url = f"https://public.bybit.com/spot/{symbol}/{filename}"
+        filepath = symbol_dir / filename
+        
+        if dry_run:
+            print(f"  {url}")
+            continue
+            
+        if filepath.exists():
+            skipped += 1
+            continue
+            
+        tasks.append((url, filepath))
+    
+    if dry_run:
+        return {'success': 0, 'failed': 0, 'skipped': 0}
+    
+    print(f"  To download: {len(tasks)}, Skipped: {skipped}")
+    
+    if not tasks:
+        return {'success': 0, 'failed': 0, 'skipped': skipped}
+    
+    success = 0
+    failed = 0
+    
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(download_file, url, path): path for url, path in tasks}
+        for future in as_completed(futures):
+            path = futures[future]
+            ok, msg = future.result()
+            if ok:
+                print(f"    ✓ {path.name} ({msg})")
+                success += 1
+            elif msg == "not_found":
+                print(f"    - {path.name} (not available)")
+            else:
+                print(f"    ✗ {path.name} ({msg})")
+                failed += 1
+    
+    return {'success': success, 'failed': failed, 'skipped': skipped}
+
+
 def main() -> None:
     """
     Точка входа.
@@ -91,11 +157,14 @@ def main() -> None:
         epilog="""
 Примеры:
   python download_trades.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
+  python download_trades.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --start-date 2024-01-01 --end-date 2025-12-31
   python download_trades.py ETHUSDT --start-date 2025-01-01 --end-date 2025-12-31 --workers 10
         """
     )
-    parser.add_argument("symbol", nargs="?", default="BTCUSDT",
-                        help="Торговая пара (default: BTCUSDT)")
+    parser.add_argument("symbol", nargs="?", default=None,
+                        help="Торговая пара (можно использовать --symbols)")
+    parser.add_argument("--symbols", type=str, default=None,
+                        help="Список пар через запятую: BTCUSDT,ETHUSDT,SOLUSDT")
     parser.add_argument("--start-date", type=str, required=True,
                         help="Начальная дата (YYYY-MM-DD)")
     parser.add_argument("--end-date", type=str, required=True,
@@ -109,66 +178,39 @@ def main() -> None:
     
     args = parser.parse_args()
     
-    output_dir = Path(args.output_dir) / args.symbol
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Определяем список символов
+    if args.symbols:
+        symbols = [s.strip().upper() for s in args.symbols.split(',')]
+    elif args.symbol:
+        symbols = [args.symbol.upper()]
+    else:
+        symbols = ["BTCUSDT"]
     
+    output_dir = Path(args.output_dir)
     start = datetime.strptime(args.start_date, "%Y-%m-%d")
     end = datetime.strptime(args.end_date, "%Y-%m-%d")
     total_days = (end - start).days + 1
     
     print(f"Bybit Trades Downloader")
-    print(f"Symbol: {args.symbol}")
+    print(f"Symbols: {', '.join(symbols)}")
     print(f"Period: {args.start_date} to {args.end_date} ({total_days} days)")
     print(f"Output: {output_dir}")
-    print("-" * 50)
+    print("=" * 50)
     
-    tasks = []
-    skipped = 0
+    total_stats = {'success': 0, 'failed': 0, 'skipped': 0}
     
-    for date in daterange(start, end):
-        date_str = date.strftime("%Y-%m-%d")
-        filename = f"{args.symbol}_{date_str}.csv.gz"
-        url = f"https://public.bybit.com/spot/{args.symbol}/{filename}"
-        filepath = output_dir / filename
+    for i, symbol in enumerate(symbols, 1):
+        print(f"\n[{i}/{len(symbols)}] {symbol}")
+        print("-" * 30)
         
-        if args.dry_run:
-            print(f"  {url}")
-            continue
-            
-        if filepath.exists():
-            skipped += 1
-            continue
-            
-        tasks.append((url, filepath))
+        stats = download_symbol(symbol, start, end, output_dir, args.workers, args.dry_run)
+        
+        total_stats['success'] += stats['success']
+        total_stats['failed'] += stats['failed']
+        total_stats['skipped'] += stats['skipped']
     
-    if args.dry_run:
-        return
-    
-    print(f"To download: {len(tasks)}, Skipped: {skipped}")
-    
-    if not tasks:
-        print("All files already downloaded.")
-        return
-    
-    success = 0
-    failed = 0
-    
-    with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = {executor.submit(download_file, url, path): path for url, path in tasks}
-        for future in as_completed(futures):
-            path = futures[future]
-            ok, msg = future.result()
-            if ok:
-                print(f"  ✓ {path.name} ({msg})")
-                success += 1
-            elif msg == "not_found":
-                print(f"  - {path.name} (not available)")
-            else:
-                print(f"  ✗ {path.name} ({msg})")
-                failed += 1
-    
-    print("-" * 50)
-    print(f"Done: {success} downloaded, {failed} failed")
+    print("\n" + "=" * 50)
+    print(f"ИТОГО: {total_stats['success']} скачано, {total_stats['failed']} ошибок, {total_stats['skipped']} пропущено")
 
 
 if __name__ == "__main__":
