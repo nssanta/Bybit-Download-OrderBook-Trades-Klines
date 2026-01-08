@@ -5,6 +5,7 @@
 """
 
 import os
+import time
 import argparse
 import requests
 from datetime import datetime, timedelta
@@ -13,32 +14,50 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Tuple
 
 
-def download_file(url: str, filepath: Path) -> Tuple[bool, str]:
+def download_file(url: str, filepath: Path, max_retries: int = 3) -> Tuple[bool, str]:
     """
-    Скачиваем файл по URL.
+    Скачиваем файл по URL с повторными попытками и атомарной записью.
 
     params:
         url: URL источника
         filepath: Путь для сохранения
+        max_retries: Количество попыток
     return:
         Кортеж (успех, сообщение)
     """
-    try:
-        with requests.get(url, stream=True, timeout=60) as r:
-            if r.status_code == 404:
-                return False, "not_found"
-            r.raise_for_status()
+    temp_path = filepath.with_suffix('.tmp')
+    
+    for attempt in range(max_retries):
+        try:
+            with requests.get(url, stream=True, timeout=60) as r:
+                if r.status_code == 404:
+                    return False, "not_found"
+                r.raise_for_status()
+                
+                total_size = int(r.headers.get('content-length', 0))
+                
+                with open(temp_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                
+                if total_size > 0 and temp_path.stat().st_size != total_size:
+                    raise IOError("Incomplete download")
+                
+                os.replace(temp_path, filepath)
+                            
+                size_mb = total_size / 1024 / 1024
+                return True, f"{size_mb:.1f} MB"
+                
+        except requests.exceptions.Timeout:
+            time.sleep(5)
+        except Exception:
+            time.sleep(2)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
             
-            total_size = int(r.headers.get('content-length', 0))
-            with open(filepath, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-                    
-            size_mb = total_size / 1024 / 1024
-            return True, f"{size_mb:.1f} MB"
-            
-    except Exception as e:
-        return False, str(e)
+    return False, "failed"
 
 
 def daterange(start: datetime, end: datetime):
