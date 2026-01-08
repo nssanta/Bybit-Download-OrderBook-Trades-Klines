@@ -113,7 +113,7 @@ def convert_file(zip_path: Path, output_path: Path,
     print("Saving...", end=" ", flush=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df = pl.concat(batches)
-    df.write_parquet(output_path, compression="zstd", compression_level=3)
+    df.write_parquet(output_path, compression="zstd", compression_level=19)
     print("Done")
     
     if verify:

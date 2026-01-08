@@ -15,9 +15,10 @@ CLI tools for downloading historical **Spot** market data from Bybit. No API key
 - **📊 Order Book** — 200 levels, 200ms updates
 - **💹 Trades** — Tick-by-tick trade history
 - **📈 Klines** — Spot & Futures via Bybit API v5
-- **🗜️ Parquet Converter** — Lossless ZSTD compression
+- **🗜️ Parquet Streaming** — Download & convert in one step, saves ~22% vs ZIP
 - **🔒 Atomic writes** — Safe from interruptions
 - **🔄 Smart Retry** — Robust network handling
+- **💾 Disk Protection** — Auto-stop when disk space is low
 
 ## 📦 Installation
 
@@ -31,9 +32,32 @@ pip install -r requirements.txt
 
 ## 📖 Usage
 
-### Download Order Book
+### Order Book (Streaming — Recommended)
+Download and convert to Parquet in one step. Saves disk space (~22% smaller than ZIP).
+
+```bash
+# Single symbol
+python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
+
+# Multiple symbols with custom workers
+python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 5
+
+# With disk space threshold (stop if < 100 GB free)
+python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-12-31 --min-disk 100
+```
+
+### Order Book (Legacy — ZIP only)
+Download raw ZIP archives without conversion.
+
 ```bash
 python scripts/download_orderbook.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
+```
+
+### Convert ZIP to Parquet
+Convert previously downloaded ZIP archives to Parquet.
+
+```bash
+python scripts/convert_to_parquet.py --input data/raw/orderbook/BTCUSDT --output data/parquet/BTCUSDT
 ```
 
 ### Download Trades
@@ -41,20 +65,15 @@ python scripts/download_orderbook.py BTCUSDT --start-date 2025-05-01 --end-date 
 python scripts/download_trades.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
 ```
 
-### Klines (API - Recommended)
-Download Spot or Futures (Perpetual) klines directly from Bybit API (most accurate).
+### Klines (API)
+Download Spot or Futures (Perpetual) klines directly from Bybit API.
 
 ```bash
-# Spot Market (API)
+# Spot Market
 python scripts/download_klines.py BTCUSDT --source spot --start-date 2025-01-01 --end-date 2025-01-31 --interval 1
 
-# Futures Market (API)
+# Futures Market
 python scripts/download_klines.py BTCUSDT --source linear --start-date 2025-01-01 --end-date 2025-01-31 --interval 60
-```
-
-### Convert Order Book to Parquet
-```bash
-python scripts/convert_to_parquet.py --input data/raw/orderbook/BTCUSDT --output data/parquet/BTCUSDT
 ```
 
 ## 📁 Data Structure
@@ -62,24 +81,36 @@ python scripts/convert_to_parquet.py --input data/raw/orderbook/BTCUSDT --output
 ```
 data/
 ├── raw/
-│   ├── orderbook/BTCUSDT/   # ZIP archives
-│   └── trades/BTCUSDT/      # CSV.gz files
+│   ├── orderbook/BTCUSDT/      # ZIP archives (legacy)
+│   └── trades/BTCUSDT/         # CSV.gz files
 ├── parquet/
-│   └── BTCUSDT/             # Parquet files
+│   └── orderbook/BTCUSDT/      # Parquet files (recommended)
 └── klines/
-    ├── spot/BTCUSDT/        # API Spot Klines
-    └── futures/BTCUSDT/     # API Futures Klines
+    ├── spot/BTCUSDT/           # Spot klines
+    └── futures/BTCUSDT/        # Futures klines
 ```
 
-## 📋 Data Formats
+## 📋 Data Formats & Sizes
 
-| Type | Source | Format | Size/day |
-|------|--------|--------|----------|
-| Order Book | quote-saver.bycsi.com | JSON (200 lvls) | ~400 MB |
-| Trades | public.bybit.com/spot | CSV.gz | ~5-50 MB |
-| Klines | Bybit API v5 | Parquet/CSV | ~1-5 MB |
+| Type | Source | Raw Format | Parquet | Size/day |
+|------|--------|------------|---------|----------|
+| Order Book | quote-saver.bycsi.com | ZIP (JSON, 450 MB) | ZSTD (~65 MB) | **65-100 MB** |
+| Trades | public.bybit.com/spot | CSV.gz | — | ~5-50 MB |
+| Klines | Bybit API v5 | — | ZSTD | ~1-5 MB |
 
-## ⏰ Availability
+### Order Book Parquet Schema
+
+| Column | Type | Description |
+|--------|------|-------------|
+| ts | int64 | Server timestamp (ms) |
+| cts | int64 | Client timestamp (ms) |
+| type | string | `snapshot` or `delta` |
+| u | int64 | Update ID |
+| seq | int64 | Sequence number |
+| bids | string | JSON array `[["price", "qty"], ...]` |
+| asks | string | JSON array `[["price", "qty"], ...]` |
+
+## ⏰ Data Availability
 
 | Data Type | Available From |
 |-----------|---------------|
@@ -88,8 +119,19 @@ data/
 
 ## ⚠️ Important Notes
 
-- **API Recommended**: For Klines, use `--source spot` or `--source linear` (API) for the most accurate data.
-- **Atomic Writes**: Scripts use temporary files to prevent corruption.
+- **Use Streaming for Order Book**: `download_orderbook_stream.py` is recommended — saves ~22% disk space.
+- **Disk Space Warning**: Order Book data is large! ~65-100 MB/day per symbol = **~24-36 GB/year** per symbol.
+- **Check Disk Health**: For HDD, install `smartmontools` and run `sudo smartctl -a /dev/sdX`.
+
+## 🔧 Disk Health Check (Linux)
+
+```bash
+# Install smartmontools
+sudo apt install smartmontools
+
+# Check disk health
+sudo smartctl -a /dev/sda
+```
 
 ## 📄 License
 
