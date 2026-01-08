@@ -36,15 +36,20 @@ pip install -r requirements.txt
 Download and convert to Parquet in one step. Saves disk space (~22% smaller than ZIP).
 
 ```bash
-# Single symbol
-python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
+# Single symbol (recommended: 3 workers, 10s stagger)
+python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 3 --stagger 10
 
-# Multiple symbols with custom workers
-python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 5
+# Multiple symbols
+python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
 
 # With disk space threshold (stop if < 100 GB free)
 python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-12-31 --min-disk 100
 ```
+
+**Flags:**
+- `--workers N` — parallel downloads (recommended: 3-5, more may cause timeouts)
+- `--stagger N` — random delay 0-N seconds before each worker starts (prevents connection flood)
+- `--min-disk N` — stop if disk space drops below N GB
 
 ### Order Book (Legacy — ZIP only)
 Download raw ZIP archives without conversion.

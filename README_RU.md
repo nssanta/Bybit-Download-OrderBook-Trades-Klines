@@ -36,15 +36,20 @@ pip install -r requirements.txt
 Скачивание и конвертация в Parquet за один шаг. Экономит ~22% места.
 
 ```bash
-# Один символ
-python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
+# Один символ (рекомендуется: 3 воркера, 10с задержка)
+python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 3 --stagger 10
 
 # Несколько символов
-python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 5
+python scripts/download_orderbook_stream.py --symbols BTCUSDT,ETHUSDT,SOLUSDT --start-date 2025-05-01 --end-date 2025-05-31 --workers 3
 
 # С порогом свободного места (остановка если < 100 ГБ)
 python scripts/download_orderbook_stream.py BTCUSDT --start-date 2025-05-01 --end-date 2025-12-31 --min-disk 100
 ```
+
+**Флаги:**
+- `--workers N` — параллельных загрузок (рекомендуется: 3-5, больше может вызвать таймауты)
+- `--stagger N` — случайная задержка 0-N секунд перед стартом каждого воркера
+- `--min-disk N` — остановка если места на диске меньше N ГБ
 
 ### Order Book (Legacy — только ZIP)
 Скачивание ZIP архивов без конвертации.
