@@ -40,13 +40,17 @@ python scripts/download_orderbook.py BTCUSDT --start-date 2025-05-01 --end-date 
 python scripts/download_trades.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
 ```
 
-### Сгенерировать Klines из Trades
+### Klines (API - Рекомендуется)
+Скачивайте Spot или Futures (Perpetual) свечи напрямую через API (самые точные данные).
+
 ```bash
-# Сначала скачайте trades, потом генерируйте klines
-python scripts/generate_klines.py BTCUSDT --interval 1m
-python scripts/generate_klines.py BTCUSDT --interval 1h
-python scripts/generate_klines.py BTCUSDT --interval 1d
+# Spot Market (API)
+python scripts/download_klines.py BTCUSDT --source spot --start-date 2025-01-01 --end-date 2025-01-31 --interval 1
+
+# Futures Market (API)
+python scripts/download_klines.py BTCUSDT --source linear --start-date 2025-01-01 --end-date 2025-01-31 --interval 60
 ```
+
 
 ### Конвертировать Order Book в Parquet
 ```bash
@@ -72,7 +76,7 @@ data/
 |-----|----------|--------|-------------|
 | Order Book | quote-saver.bycsi.com | JSON (200 ур.) | ~400 МБ |
 | Trades | public.bybit.com/spot | CSV.gz | ~5-50 МБ |
-| Klines | Генерация из Trades | Parquet/CSV | ~1 МБ |
+| Klines | Bybit API v5 | Parquet/CSV | ~1-5 МБ |
 
 ## ⏰ Доступность
 
@@ -83,9 +87,8 @@ data/
 
 ## ⚠️ Важные замечания
 
-- Все данные относятся к рынку **Spot**
-- Klines **генерируются из trades** (не скачиваются отдельно)
-- Скрипты используют **атомарную запись** (защита от прерываний)
+- **API для Klines**: Используйте `--source spot` или `--source linear` для получения точных данных с биржи.
+- **Атомарная запись**: Скрипты используют временные файлы для защиты от сбоев.
 
 ## 📄 Лицензия
 

@@ -71,6 +71,8 @@ def download_klines_api(category: str, symbol: str, interval: str, start_date: s
         interval: Интервал свечей
         start_date: Начало
         end_date: Конец
+        output_dir: Директория для сохранения
+        rate_limit: Пауза между запросами
     return:
         Статистика
     """
@@ -210,6 +212,7 @@ def download_archive_klines(symbol: str, interval: str, start_date: str, end_dat
         interval: Интервал свечей
         start_date: Начало
         end_date: Конец
+        output_dir: Директория для сохранения
     return:
         Статистика
     """

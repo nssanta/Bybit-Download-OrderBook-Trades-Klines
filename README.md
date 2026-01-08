@@ -14,9 +14,10 @@ CLI tools for downloading historical **Spot** market data from Bybit. No API key
 
 - **📊 Order Book** — 200 levels, 200ms updates
 - **💹 Trades** — Tick-by-tick trade history
-- **📈 Klines** — Generated from trades (any timeframe)
+- **📈 Klines** — Spot & Futures via Bybit API v5
 - **🗜️ Parquet Converter** — Lossless ZSTD compression
 - **🔒 Atomic writes** — Safe from interruptions
+- **🔄 Smart Retry** — Robust network handling
 
 ## 📦 Installation
 
@@ -40,12 +41,15 @@ python scripts/download_orderbook.py BTCUSDT --start-date 2025-05-01 --end-date 
 python scripts/download_trades.py BTCUSDT --start-date 2025-05-01 --end-date 2025-05-31
 ```
 
-### Generate Klines from Trades
+### Klines (API - Recommended)
+Download Spot or Futures (Perpetual) klines directly from Bybit API (most accurate).
+
 ```bash
-# First download trades, then generate klines
-python scripts/generate_klines.py BTCUSDT --interval 1m
-python scripts/generate_klines.py BTCUSDT --interval 1h
-python scripts/generate_klines.py BTCUSDT --interval 1d
+# Spot Market (API)
+python scripts/download_klines.py BTCUSDT --source spot --start-date 2025-01-01 --end-date 2025-01-31 --interval 1
+
+# Futures Market (API)
+python scripts/download_klines.py BTCUSDT --source linear --start-date 2025-01-01 --end-date 2025-01-31 --interval 60
 ```
 
 ### Convert Order Book to Parquet
@@ -63,7 +67,8 @@ data/
 ├── parquet/
 │   └── BTCUSDT/             # Parquet files
 └── klines/
-    └── BTCUSDT/             # Generated OHLCV
+    ├── spot/BTCUSDT/        # API Spot Klines
+    └── futures/BTCUSDT/     # API Futures Klines
 ```
 
 ## 📋 Data Formats
@@ -72,7 +77,7 @@ data/
 |------|--------|--------|----------|
 | Order Book | quote-saver.bycsi.com | JSON (200 lvls) | ~400 MB |
 | Trades | public.bybit.com/spot | CSV.gz | ~5-50 MB |
-| Klines | Generated from Trades | Parquet/CSV | ~1 MB |
+| Klines | Bybit API v5 | Parquet/CSV | ~1-5 MB |
 
 ## ⏰ Availability
 
@@ -83,9 +88,8 @@ data/
 
 ## ⚠️ Important Notes
 
-- All data is **Spot** market data
-- Klines are **generated from trades** (not downloaded separately)
-- Scripts use **atomic writes** (safe from interruptions)
+- **API Recommended**: For Klines, use `--source spot` or `--source linear` (API) for the most accurate data.
+- **Atomic Writes**: Scripts use temporary files to prevent corruption.
 
 ## 📄 License
 
